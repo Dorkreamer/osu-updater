@@ -1,4 +1,5 @@
 import os
+import sys
 import threading
 
 import gi
@@ -11,8 +12,15 @@ from github import Github
 g = Github(None)
 repo = g.get_repo("ppy/osu")
 
-class Updater(Gtk.Window):
+def get_script_name():
+    if getattr(sys, 'frozen', False):
+        # Running in PyInstaller bundle
+        return os.path.basename(f"{sys.argv[0]}")
+    else:
+        # Running as a standalone script
+        return os.path.basename(__file__)
 
+class Updater(Gtk.Window):
     def __init__(self):
         super().__init__(title="osu! updater")
         self.set_border_width(10)
@@ -55,34 +63,54 @@ class Updater(Gtk.Window):
         threading.Thread(target=self.download_thread).start()
 
     def download_thread(self):
-        for asset in repo.get_releases()[0].assets:
-            if asset.name.lower().endswith(".appimage"):
-                release = asset
-        
         try:
-            response = requests.get(release.browser_download_url, stream=True)
-            response.raise_for_status()  # Raise exception for HTTP errors
-
-            total_length = int(response.headers.get('content-length'))
-            bytes_received = 0
-
-            download_path = os.path.join(os.getcwd(), "osu.AppImage")
-            with open(download_path, "wb") as file:
-                chunk_size = 1024
-                for data in response.iter_content(chunk_size=chunk_size):
-                    file.write(data)
-                    bytes_received += len(data)
-                    fraction = bytes_received / total_length
-                    GLib.idle_add(self.update_progress, fraction)
-                os.system(f"chmod +x {download_path}")
+            release = None
+            for asset in repo.get_releases()[0].assets:
+                if asset.name.lower().endswith(".appimage"):
+                    release = asset
+                    break
             
-            version_file_path = os.path.join(os.getcwd(), "version.txt")
-            with open(version_file_path, "w") as version_file:
-                version_file.write(f"{repo.get_releases()[0].title}")
+            if release is None:
+                raise ValueError("No AppImage found in the release assets.")
             
-            # Close the updater window
-            GLib.idle_add(self.destroy)
+            
+            with requests.Session() as session:
+                response = session.get(release.browser_download_url, stream=True)
+                response.raise_for_status()  # Raise exception for HTTP errors
 
+                total_length = int(response.headers.get('content-length'))
+                bytes_received = 0
+
+                download_path = os.path.join(os.getcwd(), "osu.AppImage")
+                with open(download_path, "wb") as file:
+                    chunk_size = 1024
+                    for data in response.iter_content(chunk_size=chunk_size):
+                        file.write(data)
+                        bytes_received += len(data)
+                        fraction = bytes_received / total_length
+                        GLib.idle_add(self.update_progress, fraction)
+                    
+                    os.chmod(download_path, 0o755)  # Change file mode
+                    desktop_file_path = os.path.expanduser("~/.local/share/applications/osu.desktop")
+                    with open(desktop_file_path, "w") as desktop_file:
+                        desktop_file.write("[Desktop Entry]\n")
+                        desktop_file.write("Type=Application\n")
+                        desktop_file.write("Version=1.0\n")
+                        desktop_file.write("Name=osu!\n")
+                        desktop_file.write("Comment=Rhythm is just a *click* away\n")
+                        desktop_file.write(f"Path={os.getcwd()}\n")
+                        script_name = "./" + get_script_name().replace(" ", "\ ") #This is a workaround to allow the executable to have a goofy filename
+                        desktop_file.write(f"Exec={'python ' + script_name if script_name.endswith('.py') else script_name}\n")
+                        desktop_file.write(f"Icon={os.path.join(os.getcwd(), 'assets/cookie.png')}\n")
+                        desktop_file.write("Terminal=false\n")
+                
+                with open(os.path.join(os.getcwd(), "version.txt"), "w") as version_file:
+                    version_file.write(f"{repo.get_releases()[0].title}")
+                
+                # Close the updater window
+                GLib.idle_add(self.destroy)
+        except requests.exceptions.RequestException as e:
+            GLib.idle_add(self.show_error_message, str(e))
         except Exception as e:
             GLib.idle_add(self.show_error_message, str(e))
 
@@ -103,7 +131,7 @@ class Updater(Gtk.Window):
 
 if __name__ == "__main__":
     version_file_path = os.path.join(os.getcwd(), "version.txt")
-    if os.path.isfile(version_file_path):
+    if os.path.isfile(version_file_path) and os.path.isfile(os.path.join(os.getcwd(), "osu.AppImage")):
         with open(version_file_path, "r") as version_file:
             version = version_file.readline().strip()
     else:
