@@ -100,7 +100,7 @@ class Updater(Gtk.Window):
                         desktop_file.write("Comment=Rhythm is just a *click* away\n")
                         desktop_file.write(f"Path={os.getcwd()}\n")
                         script_name = "./" + get_script_name().replace(" ", "\ ") #This is a workaround to allow the executable to have a goofy filename
-                        desktop_file.write(f"Exec={'python ' + script_name if script_name.endswith('.py') else script_name}\n")
+                        desktop_file.write(f"Exec={'./osu.sh' if script_name.endswith('.py') else script_name}\n")
                         desktop_file.write(f"Icon={os.path.join(os.getcwd(), 'assets/cookie.png')}\n")
                         desktop_file.write("Terminal=false\n")
                 
